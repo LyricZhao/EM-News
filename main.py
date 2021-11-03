@@ -13,32 +13,46 @@ def read_vocab_file(path: str) -> tuple[int, list[str], list[int]]:
 
 
 # Return $T_{dw}$ in the formulas
-def read_libsvm_file(path: str, max_sample_freq: int = 60) -> tuple[int, list]:
+def read_libsvm_file(path: str) -> tuple[int, list]:
     with open(path, 'r') as file:
         T = []
         for line in file.readlines():
             terms = line.split()[1:]
-            T_d, s_freq = [], 0
+            T_d = []
             for term in terms:
                 w, freq = term.split(':')
                 w, freq = int(w), int(freq)
-                s_freq += freq
-                if s_freq >= max_sample_freq:
-                    break
                 T_d.append((w, freq))
             T.append(T_d)
         return len(T), T
 
 
+# Filter by frequency
+def filter_by_freq(T: np.array, freqs: list[int], max_freq_sum: int = 20) -> tuple[int, list]:
+    new_T = []
+    for T_d in T:
+        T_d = sorted(T_d, key=lambda term: freqs[term[0]], reverse=True)
+        new_T_d = []
+        freq_sum = 0
+        for term in T_d:
+            freq_sum += term[1]
+            if freq_sum > max_freq_sum:
+                break
+            new_T_d.append(term)
+        new_T.append(new_T_d)
+    return len(new_T), new_T
+
+
 if __name__ == '__main__':
     # Configurations
-    K = 100
-    threshold = 0.1
+    K = 10
+    threshold = 0.01
     top_k = 10
 
-    # Read data
-    W, labels, _ = read_vocab_file('20news/20news.vocab')
-    D, T = read_libsvm_file('20news/20news.libsvm')
+    # Read data and filter
+    W, labels, freqs = read_vocab_file('20news/20news.vocab')
+    _, T = read_libsvm_file('20news/20news.libsvm')
+    D, T = filter_by_freq(T, freqs)
 
     # Initializations
     np.random.seed(19981011)
@@ -73,11 +87,9 @@ if __name__ == '__main__':
         # Obtain $\gamma(z_{dk})$
         gamma = p * pi  # [D, K]
         gamma = (gamma.T / np.sum(gamma, axis=1)).T
-        # print('Gamma: {}'.format(gamma))
 
         # Calculate the new $\pi$
         pi = np.sum(gamma.T, axis=1) / D
-        # print('Pi: {}'.format(pi))
 
         # Calculate $\mu$ of the next round
         next_mu = np.zeros_like(mu)
@@ -107,6 +119,8 @@ if __name__ == '__main__':
     print('Results:')
     for k in range(K):
         print(' > {:.0f} items in cluster#{:.0f}'.format(cluster_count[k], k))
-        sort_w = np.argsort(cluster_freq, axis=1)
+        sort_w = np.argsort(-cluster_freq, axis=1)
         for i in range(min(top_k, sort_w.shape[1])):
+            if cluster_freq[k, sort_w[k, i]] == 0:
+                break
             print('  > Top {} word: {}'.format(i + 1, labels[sort_w[k, i]]))
