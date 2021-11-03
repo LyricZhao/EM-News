@@ -1,4 +1,6 @@
+import argparse
 import numpy as np
+import scipy.special as ss
 
 
 # Return labels and frequency of terms
@@ -27,69 +29,69 @@ def read_libsvm_file(path: str) -> tuple[int, list]:
         return len(T), T
 
 
-# Filter by frequency
-def filter_by_freq(T: np.array, freqs: list[int], max_freq_sum: int = 20) -> tuple[int, list]:
-    new_T = []
-    for T_d in T:
-        T_d = sorted(T_d, key=lambda term: freqs[term[0]], reverse=True)
-        new_T_d = []
-        freq_sum = 0
-        for term in T_d:
-            freq_sum += term[1]
-            if freq_sum > max_freq_sum:
-                break
-            new_T_d.append(term)
-        new_T.append(new_T_d)
-    return len(new_T), new_T
+def log_factorial(n: int) -> float:
+    return sum([np.math.log(i + 1.0) for i in range(n)])
 
 
 if __name__ == '__main__':
+    # Parse arguments
+    parser = argparse.ArgumentParser(description='EM Algorithm for 20News')
+    parser.add_argument('--k', default=20, type=int, help='Number of clusters')
+    args = parser.parse_args()
+
     # Configurations
-    K = 10
+    K = args.k
     threshold = 0.01
     top_k = 10
 
     # Read data and filter
     W, labels, freqs = read_vocab_file('20news/20news.vocab')
-    _, T = read_libsvm_file('20news/20news.libsvm')
-    D, T = filter_by_freq(T, freqs)
+    D, T = read_libsvm_file('20news/20news.libsvm')
 
     # Initializations
     np.random.seed(19981011)
-    mu = np.random.randn(K, W)
+    mu = np.random.uniform(1.0, 10.0, (K, W))
     mu = mu.T / np.sum(mu, axis=1)
-    pi = np.random.randn(K)
+    pi = np.random.uniform(1.0, 10.0, (K,))
     pi = pi / np.sum(pi)
+    # mu = np.ones(shape=(W, K)) / W
+    # pi = np.ones(shape=(K, )) / K
 
     # Pre-process
     n_terms = 0
-    fnd_div_ftdw = np.zeros(shape=(D,))
+    log_fnd_div_ftdw = np.zeros(shape=(D,))
     for d in range(D):
         nd = sum([item[1] for item in T[d]])
-        f = np.math.factorial(nd)
+        f = log_factorial(nd)
         for (w, freq) in T[d]:
             n_terms += freq
-            f /= np.math.factorial(freq)
-        fnd_div_ftdw[d] = f
+            f -= log_factorial(freq)
+        log_fnd_div_ftdw[d] = f
 
     # EM algorithm
     n_rounds = 0
     while True:
         # Obtain $P_{dk}$
-        p = np.zeros(shape=(D, K))
+        log_p = np.zeros(shape=(D, K))
         for d in range(D):
             for k in range(K):
-                prod_mu = fnd_div_ftdw[d]
+                prod_mu = log_fnd_div_ftdw[d]
                 for (w, freq) in T[d]:
-                    prod_mu *= np.math.pow(mu[w, k], freq)
-                p[d, k] = prod_mu
+                    prod_mu += freq * np.math.log(mu[w, k])
+                log_p[d, k] = prod_mu
 
         # Obtain $\gamma(z_{dk})$
-        gamma = p * pi  # [D, K]
-        gamma = (gamma.T / np.sum(gamma, axis=1)).T
+        log_gamma_num = log_p + np.log(pi)  # [D, K]
+        log_gamma_deno = ss.logsumexp(log_gamma_num, axis=1)  # [D]
+        log_gamma = (log_gamma_num.T / log_gamma_deno).T  # [D, K]
 
         # Calculate the new $\pi$
-        pi = np.sum(gamma.T, axis=1) / D
+        log_pi = ss.logsumexp(log_gamma.T, axis=1)
+        log_pi -= np.math.log(D)
+
+        # Restore from log-scale
+        gamma = np.exp(log_gamma)
+        pi = np.exp(log_pi)
 
         # Calculate $\mu$ of the next round
         next_mu = np.zeros_like(mu)
